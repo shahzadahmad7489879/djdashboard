@@ -13,8 +13,8 @@ const bodyFont = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "DJ Request Board",
-  description: "Audience song requests with a simple DJ dashboard.",
+  title: "Nightclub Song Requests",
+  description: "Instant song requests with IPS payment confirmation.",
 };
 
 export default function RootLayout({

@@ -1,104 +1,103 @@
-import { promises as fs } from "fs";
-import path from "path";
 import crypto from "crypto";
 
-export type RequestStatus = "paid" | "played" | "cancelled";
+export type PaymentStatus = "pending" | "paid" | "failed";
 
-export type RequestItem = {
+export type PaymentIntent = {
   id: string;
   song: string;
-  artist?: string;
-  requesterName?: string;
+  artist: string;
   amount: number;
-  status: RequestStatus;
+  status: PaymentStatus;
+  bankReference?: string;
   createdAt: string;
   updatedAt: string;
 };
 
-const dataDir = path.join(process.cwd(), "data");
-const dataFile = path.join(dataDir, "requests.json");
-
-async function ensureStore() {
-  await fs.mkdir(dataDir, { recursive: true });
-  try {
-    await fs.access(dataFile);
-  } catch {
-    await fs.writeFile(dataFile, "[]", "utf8");
-  }
-}
-
-async function readAll(): Promise<RequestItem[]> {
-  await ensureStore();
-  const raw = await fs.readFile(dataFile, "utf8");
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as RequestItem[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-async function writeAll(items: RequestItem[]) {
-  await ensureStore();
-  await fs.writeFile(dataFile, JSON.stringify(items, null, 2), "utf8");
-}
-
-export async function listRequests(): Promise<RequestItem[]> {
-  const items = await readAll();
-  return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-}
-
-export async function createRequest(input: {
+export type RequestItem = {
+  id: string;
   song: string;
-  artist?: string;
-  requesterName?: string;
-  amount?: number;
-}): Promise<RequestItem> {
+  artist: string;
+  amount: number;
+  createdAt: string;
+};
+
+type Store = {
+  intents: PaymentIntent[];
+  requests: RequestItem[];
+};
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __mockStore: Store | undefined;
+}
+
+function getStore(): Store {
+  if (!globalThis.__mockStore) {
+    globalThis.__mockStore = { intents: [], requests: [] };
+  }
+  return globalThis.__mockStore;
+}
+
+export async function createPaymentIntent(input: {
+  song: string;
+  artist: string;
+  amount: number;
+}): Promise<PaymentIntent> {
+  const store = getStore();
   const now = new Date().toISOString();
-  const item: RequestItem = {
+  const intent: PaymentIntent = {
     id: crypto.randomUUID(),
     song: input.song.trim(),
-    artist: input.artist?.trim() || undefined,
-    requesterName: input.requesterName?.trim() || undefined,
-    amount: typeof input.amount === "number" ? input.amount : 0,
-    status: "paid",
+    artist: input.artist.trim(),
+    amount: input.amount,
+    status: "pending",
     createdAt: now,
     updatedAt: now,
   };
 
-  const items = await readAll();
-  items.unshift(item);
-  await writeAll(items);
-  return item;
+  store.intents.unshift(intent);
+  return intent;
 }
 
-export async function updateRequest(
-  id: string,
-  patch: Partial<Pick<RequestItem, "status" | "song" | "artist" | "requesterName" | "amount">>
+export async function markPaymentPaid(
+  intentId: string,
+  bankReference?: string
 ): Promise<RequestItem | null> {
-  const items = await readAll();
-  const index = items.findIndex((item) => item.id === id);
-  if (index === -1) {
+  const store = getStore();
+  const intent = store.intents.find((item) => item.id === intentId);
+  if (!intent) {
     return null;
   }
 
-  const updated: RequestItem = {
-    ...items[index],
-    ...patch,
-    updatedAt: new Date().toISOString(),
+  if (intent.status !== "paid") {
+    intent.status = "paid";
+    intent.bankReference = bankReference;
+    intent.updatedAt = new Date().toISOString();
+  }
+
+  const existing = store.requests.find((item) => item.id === intentId);
+  if (existing) {
+    return existing;
+  }
+
+  const request: RequestItem = {
+    id: intent.id,
+    song: intent.song,
+    artist: intent.artist,
+    amount: intent.amount,
+    createdAt: new Date().toISOString(),
   };
 
-  items[index] = updated;
-  await writeAll(items);
-  return updated;
+  store.requests.unshift(request);
+  return request;
 }
 
-export async function deleteRequest(id: string): Promise<boolean> {
-  const items = await readAll();
-  const next = items.filter((item) => item.id !== id);
-  if (next.length === items.length) {
-    return false;
-  }
-  await writeAll(next);
-  return true;
+export async function listPaidRequests(): Promise<RequestItem[]> {
+  const store = getStore();
+  return [...store.requests].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function getPaymentIntent(intentId: string): Promise<PaymentIntent | null> {
+  const store = getStore();
+  return store.intents.find((item) => item.id === intentId) || null;
 }
